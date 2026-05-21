@@ -433,6 +433,14 @@
       font-weight: 950;
     }
 
+    .score-note {
+      display: block;
+      margin-top: 1px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 800;
+    }
+
     .area-row.insufficient .score-value.actual {
       color: var(--bad);
     }
@@ -1353,11 +1361,13 @@
       });
     }
 
-    function creditScoreHtml(value, target) {
+    function creditScoreHtml(value, target, requiredNote = "") {
+      const noteLabel = requiredNote ? ` (${requiredNote})` : "";
+      const noteHtml = requiredNote ? `<span class="score-note">${requiredNote}</span>` : "";
       return `
-        <span class="area-score" aria-label="실제 이수학점 ${value}학점, 필수이수학점 ${target}학점">
+        <span class="area-score" aria-label="실제 이수학점 ${value}학점, 필수이수학점 ${target}학점${noteLabel}">
           <span class="score-piece actual"><span class="score-label">이수</span><span class="score-value actual">${value}학점</span></span>
-          <span class="score-piece required"><span class="score-label">필수</span><span class="score-value required">${target}학점</span></span>
+          <span class="score-piece required"><span class="score-label">필수</span><span class="score-value required">${target}학점</span>${noteHtml}</span>
         </span>
       `;
     }
@@ -1382,15 +1392,16 @@
 
       const techLangCourses = upperTechLangCourses(selected);
       const techLangCredits = techLangCourses.reduce((sum, course) => sum + course.credits, 0);
-      const techLangOk = techLangCredits >= 6;
+      const techLangTarget = 12;
+      const techLangOk = techLangCredits >= techLangTarget;
       const techLangRow = document.createElement("div");
       techLangRow.className = `area-row ${techLangOk ? "sufficient" : "insufficient"}`;
       techLangRow.innerHTML = `
         <div class="area-top">
           <span class="area-name">기술·가정/정보 + 제2외국어/한문</span>
-          ${creditScoreHtml(techLangCredits, 6)}
+          ${creditScoreHtml(techLangCredits, techLangTarget, "교양 제외")}
         </div>
-        <div class="bar" style="--bar:#6b7280"><span style="width:${Math.min(100, Math.round(techLangCredits / 6 * 100))}%"></span></div>
+        <div class="bar" style="--bar:#6b7280"><span style="width:${Math.min(100, Math.round(techLangCredits / techLangTarget * 100))}%"></span></div>
       `;
       areaProgress.appendChild(techLangRow);
     }
