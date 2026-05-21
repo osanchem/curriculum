@@ -544,6 +544,8 @@
           엑셀 불러오기
           <input type="file" id="excelInput" accept=".xlsx,.xls">
         </label>
+        <button type="button" id="downloadJson">JSON 다운로드</button>
+        <button type="button" id="downloadPdf" class="primary">PDF 저장</button>
         <button type="button" id="clearElectives">선택 초기화</button>
       </div>
     </div>
@@ -1120,14 +1122,182 @@
         .map(input => JSON.parse(input.dataset.course));
     }
 
-    function update() {
-      const selected = selectedCourses();
+    function selectedElectiveCourses() {
+      return [...root.querySelectorAll("input[type='checkbox']:checked")]
+        .filter(input => !input.closest(".course")?.classList.contains("required"))
+        .map(input => JSON.parse(input.dataset.course));
+    }
+
+    function sumsForCourses(selected) {
       const sums = {};
       let total = 0;
       selected.forEach(course => {
         sums[course.area] = (sums[course.area] || 0) + course.credits;
         total += course.credits;
       });
+      return { sums, total };
+    }
+
+    function buildSelectionReport() {
+      const selected = selectedCourses();
+      const electives = selectedElectiveCourses();
+      const { sums, total } = sumsForCourses(selected);
+      const techLangCredits = upperTechLangCourses(selected).reduce((sum, course) => sum + course.credits, 0);
+      const koreanMathEnglish = (sums["국어"] || 0) + (sums["수학"] || 0) + (sums["영어"] || 0);
+
+      return {
+        title: "오산고등학교 교육과정 선택 내역",
+        generatedAt: new Date().toLocaleString("ko-KR"),
+        admissionYear: yearSelect.value === "imported" ? "불러온 엑셀" : `${yearSelect.value}학년도 입학생`,
+        note: notice.hidden ? "" : notice.textContent,
+        totalCredits: total,
+        requiredTotalCredits: 174,
+        priorityRules: {
+          koreanMathEnglishCredits: koreanMathEnglish,
+          koreanMathEnglishLimit: 81,
+          koreanMathEnglishOk: koreanMathEnglish <= 81,
+          techLangCredits,
+          techLangRequiredCredits: 12,
+          techLangOk: techLangCredits >= 12
+        },
+        areaCredits: Object.fromEntries(Object.keys(REQUIRED).map(area => [
+          area,
+          {
+            credits: sums[area] || 0,
+            requiredCredits: REQUIRED[area],
+            ok: (sums[area] || 0) >= REQUIRED[area]
+          }
+        ])),
+        courses: electives.map(course => ({ ...course }))
+      };
+    }
+
+    function safeFilePart(value) {
+      return String(value || "")
+        .replace(/[\\/:*?"<>|]/g, "")
+        .replace(/\s+/g, "_")
+        .slice(0, 40);
+    }
+
+    function downloadFile(filename, content, type) {
+      const blob = new Blob([content], { type });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function reportFileBase(report) {
+      const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      return `${safeFilePart(report.admissionYear)}_선택과목_${date}`;
+    }
+
+    function downloadSelectionJson() {
+      const report = buildSelectionReport();
+      downloadFile(
+        `${reportFileBase(report)}.json`,
+        JSON.stringify(report, null, 2),
+        "application/json;charset=utf-8"
+      );
+    }
+
+    function printSelectionPdf() {
+      const report = buildSelectionReport();
+      const areaRows = Object.entries(report.areaCredits).map(([area, data]) => `
+        <tr>
+          <td>${escapeHtml(area)}</td>
+          <td>${data.credits}학점</td>
+          <td>${data.requiredCredits}학점</td>
+          <td>${data.ok ? "충족" : "미충족"}</td>
+        </tr>
+      `).join("");
+      const courseRows = report.courses.map((course, index) => `
+        <tr>
+          <td>${index + 1}</td>
+          <td>${escapeHtml(course.name)}</td>
+          <td>${escapeHtml(course.area)}</td>
+          <td>${course.credits}학점</td>
+          <td>${escapeHtml(course.sem)}</td>
+          <td>${escapeHtml(course.type)}</td>
+        </tr>
+      `).join("");
+      const printWindow = window.open("", "_blank");
+      if (!printWindow) {
+        alert("팝업이 차단되어 PDF 저장 화면을 열지 못했습니다. 팝업 차단을 해제한 뒤 다시 시도해 주세요.");
+        return;
+      }
+
+      printWindow.document.write(`
+        <!doctype html>
+        <html lang="ko">
+        <head>
+          <meta charset="utf-8">
+          <title>${escapeHtml(report.title)}</title>
+          <style>
+            @page { size: A4; margin: 14mm; }
+            * { box-sizing: border-box; }
+            body { margin: 0; color: #202636; font-family: "Pretendard", "Noto Sans KR", "Malgun Gothic", sans-serif; line-height: 1.45; }
+            h1 { margin: 0 0 6px; font-size: 22px; }
+            h2 { margin: 22px 0 8px; font-size: 15px; }
+            .meta { color: #52616f; font-size: 12px; }
+            .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 16px; }
+            .box { border: 1px solid #dfe4ee; border-radius: 6px; padding: 10px; }
+            .label { color: #697184; font-size: 11px; font-weight: 700; }
+            .value { margin-top: 4px; font-size: 18px; font-weight: 900; }
+            table { width: 100%; border-collapse: collapse; font-size: 11px; page-break-inside: auto; }
+            th, td { border: 1px solid #dfe4ee; padding: 6px 7px; text-align: left; vertical-align: top; }
+            th { background: #f3f5f9; font-weight: 900; }
+            tr { page-break-inside: avoid; page-break-after: auto; }
+            .note { margin-top: 8px; color: #6f4e07; font-size: 11px; }
+          </style>
+        </head>
+        <body>
+          <h1>${escapeHtml(report.title)}</h1>
+          <div class="meta">${escapeHtml(report.admissionYear)} · 생성일 ${escapeHtml(report.generatedAt)}</div>
+          ${report.note ? `<div class="note">${escapeHtml(report.note)}</div>` : ""}
+          <section class="summary">
+            <div class="box"><div class="label">총 교과 이수학점</div><div class="value">${report.totalCredits} / ${report.requiredTotalCredits}</div></div>
+            <div class="box"><div class="label">국어+수학+영어</div><div class="value">${report.priorityRules.koreanMathEnglishCredits} / ${report.priorityRules.koreanMathEnglishLimit}</div></div>
+            <div class="box"><div class="label">기술·가정/정보 + 제2외국어/한문</div><div class="value">${report.priorityRules.techLangCredits} / ${report.priorityRules.techLangRequiredCredits}</div></div>
+          </section>
+          <h2>교과별 이수학점</h2>
+          <table>
+            <thead><tr><th>교과</th><th>이수</th><th>필수</th><th>상태</th></tr></thead>
+            <tbody>${areaRows}</tbody>
+          </table>
+          <h2>선택 과목 목록</h2>
+          <table>
+            <thead><tr><th>No.</th><th>과목명</th><th>교과</th><th>학점</th><th>학기</th><th>유형</th></tr></thead>
+            <tbody>${courseRows}</tbody>
+          </table>
+          <script>
+            window.addEventListener("load", () => {
+              document.title = ${JSON.stringify(reportFileBase(report))};
+              setTimeout(() => window.print(), 150);
+            });
+          <\/script>
+        </body>
+        </html>
+      `);
+      printWindow.document.close();
+    }
+
+    function update() {
+      const selected = selectedCourses();
+      const { sums, total } = sumsForCourses(selected);
 
       totalCredits.textContent = total;
       updateGroupLimits();
@@ -1179,8 +1349,7 @@
     function upperTechLangCourses(selected) {
       return selected.filter(course => {
         const upper = course.area === "기술∙가정/정보" || course.area === "제2외국어/한문";
-        const upperGrade = course.sem.startsWith("2-") || course.sem.startsWith("3-");
-        return upper && upperGrade;
+        return upper;
       });
     }
 
@@ -1256,6 +1425,9 @@
       });
       update();
     });
+
+    document.getElementById("downloadJson").addEventListener("click", downloadSelectionJson);
+    document.getElementById("downloadPdf").addEventListener("click", printSelectionPdf);
 
     excelInput.addEventListener("change", async event => {
       const file = event.target.files?.[0];
