@@ -553,6 +553,10 @@
           <input type="file" id="excelInput" accept=".xlsx,.xls">
         </label>
         <button type="button" id="downloadJson">JSON 다운로드</button>
+        <label class="file-button">
+          JSON 복구하기
+          <input type="file" id="jsonInput" accept=".json,application/json">
+        </label>
         <button type="button" id="downloadPdf" class="primary">PDF 저장</button>
         <button type="button" id="clearElectives">선택 초기화</button>
       </div>
@@ -891,6 +895,7 @@
     const priorityStatus = document.getElementById("priorityStatus");
     const notice = document.getElementById("notice");
     const excelInput = document.getElementById("excelInput");
+    const jsonInput = document.getElementById("jsonInput");
     const SEMESTER_COLUMNS = [
       { index: 6, gradeKey: "grade1", label: "1-1", title: "1학년 1학기" },
       { index: 7, gradeKey: "grade1", label: "1-2", title: "1학년 2학기" },
@@ -924,6 +929,14 @@
 
     function normalizeText(value) {
       return String(value ?? "").replace(/\s+/g, " ").trim();
+    }
+
+    function courseRestoreKey(course) {
+      return `${normalizeText(course?.name).replace(/\s+/g, "").toLowerCase()}|${normalizeText(course?.sem).replace(/\s+/g, "").toLowerCase()}|${normalizeText(course?.area).replace(/\s+/g, "").toLowerCase()}`;
+    }
+
+    function courseNameRestoreKey(course) {
+      return normalizeText(course?.name).replace(/\s+/g, "").toLowerCase();
     }
 
     function normalizeArea(value) {
@@ -1222,6 +1235,59 @@
       );
     }
 
+    function restoreYearFromReport(report) {
+      const admissionYear = String(report?.admissionYear || "");
+      const matchedOption = [...yearSelect.options].find(option => {
+        return admissionYear.includes(option.value) || admissionYear === option.textContent;
+      });
+      if (matchedOption && yearSelect.value !== matchedOption.value) {
+        yearSelect.value = matchedOption.value;
+        render();
+      }
+    }
+
+    function applyRestoredCourses(courses) {
+      const list = Array.isArray(courses) ? courses : [];
+      const keys = new Set(list.map(courseRestoreKey));
+      const names = new Set(list.map(courseNameRestoreKey));
+      let restored = 0;
+
+      root.querySelectorAll("input[type='checkbox']").forEach(input => {
+        if (input.closest(".course")?.classList.contains("required")) return;
+        input.checked = false;
+        input.disabled = false;
+        input.closest(".course")?.classList.remove("limit-locked");
+      });
+
+      root.querySelectorAll("input[type='checkbox']").forEach(input => {
+        if (input.closest(".course")?.classList.contains("required")) return;
+        const course = JSON.parse(input.dataset.course);
+        const checked = keys.has(courseRestoreKey(course)) || names.has(courseNameRestoreKey(course));
+        input.checked = checked;
+        if (checked) restored += 1;
+      });
+      update();
+      return restored;
+    }
+
+    async function restoreSelectionJson(event) {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      try {
+        const report = JSON.parse(await file.text());
+        if (!Array.isArray(report.courses)) throw new Error("courses 목록이 없습니다.");
+        restoreYearFromReport(report);
+        const restored = applyRestoredCourses(report.courses);
+        notice.hidden = false;
+        notice.textContent = `JSON 파일에서 선택 과목 ${restored}개를 복구했습니다.`;
+      } catch (error) {
+        notice.hidden = false;
+        notice.textContent = `JSON 파일을 복구할 수 없습니다. ${error.message}`;
+      } finally {
+        event.target.value = "";
+      }
+    }
+
     function printSelectionPdf() {
       const report = buildSelectionReport();
       const areaRows = Object.entries(report.areaCredits).map(([area, data]) => `
@@ -1439,6 +1505,7 @@
 
     document.getElementById("downloadJson").addEventListener("click", downloadSelectionJson);
     document.getElementById("downloadPdf").addEventListener("click", printSelectionPdf);
+    jsonInput.addEventListener("change", restoreSelectionJson);
 
     excelInput.addEventListener("change", async event => {
       const file = event.target.files?.[0];
